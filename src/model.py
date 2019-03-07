@@ -649,7 +649,7 @@ class NLG:
                             Variable(torch.from_numpy(
                                 decoder_labels[d_idx][:, idx])).cuda()
                     else:
-                        next_decoder_inputs[:, idx] = topi
+                        next_decoder_inputs[:, idx] = topi[:,0,0]
 
                 if testing:
                     decoder_results[d_idx][:, idx] = \
