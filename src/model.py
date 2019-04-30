@@ -661,6 +661,7 @@ class NLG:
 #                 print(decoder_labels[d_idx][:,  decoder_labels[d_idx].shape[1]-1])
 #                 print(decoder_output.squeeze(1).shape)
     
+    
                 target = Variable(
                         torch.from_numpy(
                             decoder_labels[d_idx][:, idx])).cuda()

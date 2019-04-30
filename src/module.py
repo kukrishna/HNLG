@@ -4,6 +4,7 @@ from torch.autograd import Variable
 
 use_cuda = torch.cuda.is_available()
 
+EPS=1e-6
 
 class EncoderRNN(nn.Module):
     def __init__(
@@ -164,7 +165,7 @@ class Attn(nn.Module):
 
     def forward(self, hidden, encoder_hiddens):
         attn_energies = self.score(hidden, encoder_hiddens)
-        return torch.nn.Softmax()(attn_energies)
+        return torch.nn.Softmax()(attn_energies), attn_energies
 
     def score(self, hidden, encoder_output):
         """
@@ -269,7 +270,8 @@ class CopyMechanism(nn.Module):
             nn.Softmax(dim=-1)
         )
         
-        self.output_probs=nn.Softmax()
+        self.attn_softmax=nn.Softmax(dim=-1)
+        self.output_probs=nn.Softmax(dim=-1)
         
     def forward(
             self, output_logits, attn_weights, decoder_hidden_state,
@@ -287,21 +289,20 @@ class CopyMechanism(nn.Module):
         pcopy=1.0-pgen
         output_probabilities=self.output_probs(output_logits.squeeze(1))
         
+#         attn_logits=attn_logits.squeeze(2)
+#         mask=(encoder_input!=0)*(encoder_input!=1)   # dont copy unks or pads. unk_id=0 pad_id=1
+#         attn_logits=attn_logits*mask.type(torch.float)
+#         attn_weights = self.attn_softmax(attn_logits)
+
         attn_weights=attn_weights.squeeze(2)
-        mask=encoder_input!=0
+        mask=(encoder_input!=0)*(encoder_input!=1)   # dont copy unks or pads. unk_id=0 pad_id=1
         attn_weights=attn_weights*mask.type(torch.float)
         marginals=attn_weights.sum(dim=1).view(-1,1)
-        attn_weights=attn_weights/marginals        
+        attn_weights=attn_weights/(marginals+EPS)
 
         copy_probabilities=torch.zeros_like(output_probabilities)  # batchsizexout_vocab
         copy_probabilities.scatter_add_(1, encoder_input, attn_weights)        
-        
-#         try:
-#             copy_probabilities=torch.zeros_like(output_probabilities)  # batchsizexout_vocab
-#             copy_probabilities.scatter_add_(1, encoder_input, attn_weights)
-#         except RuntimeError:
-#             print("hajraat hajraat hajraat ", output_probabilities.shape)
-        
+         
         total_probabilities=pgen*output_probabilities+pcopy*copy_probabilities
                 
         return total_probabilities.unsqueeze(1)  # batchX1Xoutvocab
@@ -447,9 +448,11 @@ class DecoderRNN(nn.Module):
         if self.attn:
             batch_size = last_hidden.size(1)
             if not self.h_attn:
-                attn_weights = self.attn(
+                attn_weights, attn_logits = self.attn(
                     last_hidden.permute(1, 0, 2).contiguous().view(batch_size, -1),
-                    encoder_hiddens).unsqueeze(2)
+                    encoder_hiddens)
+                attn_logits = attn_logits.unsqueeze(2)
+                attn_weights = attn_weights.unsqueeze(2)
                 attn = (attn_weights * encoder_hiddens).sum(1).unsqueeze(1)
             elif self.h_attn:
                 attn_weights = self.attn(
@@ -477,8 +480,6 @@ class DecoderRNN(nn.Module):
             else:
                 output = self.out(output)
             translated_encoder_input=self.copy_translation_embedding(encoder_input).squeeze(2)
-#             print(translated_encoder_input)
-#             print(torch.min(translated_encoder_input), torch.max(translated_encoder_input))
             final_probabilities = self.copy_mechanism(output, attn_weights, hidden, attn, translated_encoder_input)
             return torch.log(final_probabilities), hidden     # calling torch.log so that the returned stuff is logits . slightly dumb idea
         elif self.cell == "LSTM":
