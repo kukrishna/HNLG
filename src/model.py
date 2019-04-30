@@ -18,6 +18,8 @@ from logger import Logger
 
 from tqdm import tqdm
 
+import sys
+
 use_cuda = torch.cuda.is_available()
 
 
@@ -117,11 +119,30 @@ class NLG:
                 bidirectional=bidirectional,
                 cell=cell)
 
+
+#         can_copy_list=[0 for _ in range(len(train_data_engine.tokenizer.token_vocab.keys()))]
+#         for _word, _id in train_data_engine.tokenizer.token_vocab.items():
+#             if _word in train_data_engine.tokenizer.vocab:
+#                 can_copy_list[_id]=1
+#         can_copy_emb=torch.nn.Embedding(len(can_copy_list),1)
+#         can_copy_emb.weight.data=torch.tensor(np.array(can_copy_list).reshape(-1,1)).cuda()
+#         can_copy_emb.weight.requires_grad=False        
+        
+        mapping_list=[0 for _ in range(len(train_data_engine.tokenizer.token_vocab.keys()))]
+        for _word, _id in train_data_engine.tokenizer.token_vocab.items():
+            if _word in train_data_engine.tokenizer.vocab:
+                mapping_list[_id]=train_data_engine.tokenizer.vocab[_word]
+        copy_translate_emb=torch.nn.Embedding(len(mapping_list),1)
+        copy_translate_emb.weight.data=torch.tensor(np.array(mapping_list).reshape(-1,1)).cuda()
+        copy_translate_emb.weight.requires_grad=False        
+        
+        
         self.cell = cell
         self.decoders = []
         for n in range(n_decoders):
             decoder = DecoderRNN(
                     embedding=de_embed,
+                    copy_translation_embedding=copy_translate_emb,
                     de_vocab_size=de_vocab_size,
                     de_embedding_dim=(
                         embedding_dim
@@ -623,20 +644,31 @@ class NLG:
                     decoder_output, decoder_hidden = decoder(
                         decoder_input,
                         decoder_hidden,
+                        encoder_input,
                         encoder_outputs,
                         last_output=last_output,
                         last_decoder_hiddens=last_decoder_hiddens
                     )
                 elif decoder.cell == "LSTM":
                     decoder_output, decoder_hidden, decoder_cell = decoder(
-                            decoder_input, decoder_hidden,
+                            decoder_input, decoder_hidden, encoder_input,
                             encoder_outputs, decoder_cell,
                             last_output=last_output)
 
+#                 print(decoder_labels[d_idx].shape, idx)
+#                 sys.stdout.flush()
+                
+#                 print(decoder_labels[d_idx][:,  decoder_labels[d_idx].shape[1]-1])
+#                 print(decoder_output.squeeze(1).shape)
+    
                 target = Variable(
                         torch.from_numpy(
                             decoder_labels[d_idx][:, idx])).cuda()
 
+#                 target = Variable(
+#                         torch.from_numpy(
+#                             decoder_labels[d_idx][:, 0])).cuda()
+                
                 loss += criterion(decoder_output.squeeze(1), target)
 
                 topv, topi = decoder_output.data.topk(1)

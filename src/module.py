@@ -259,11 +259,60 @@ class HAttn(nn.Module):
                     torch.cat((hidden, encoder_output), 2)).squeeze(2)
             return energy
 
+        
+class CopyMechanism(nn.Module):
+    def __init__(
+            self, encoder_hidden_size, decoder_hidden_size, output_vocab_size):
+        super(CopyMechanism, self).__init__()
+        self.pgen=nn.Sequential(
+            nn.Linear(decoder_hidden_size+encoder_hidden_size, 1),
+            nn.Softmax(dim=-1)
+        )
+        
+        self.output_probs=nn.Softmax()
+        
+    def forward(
+            self, output_logits, attn_weights, decoder_hidden_state,
+            attn, encoder_input):
+        '''output_logits = batchx1(seqlen)xoutvocab
+            attn_weights = batchxenc_lenx1
+            decoder_hidden_state = 2(because bidirectional)Xbatchxdecoder_hidden_size(=100)
+            attn(contextvec) = batchx1xencoder_hidden_dim*2(because bidirectional)
+            encoder_input = batchxenc_len'''        
+        batch_size = attn_weights.size(0)
+        decoder_state_reshaped = decoder_hidden_state.permute(1,0,2).contiguous().view(batch_size, -1)
+        context_vec=attn.squeeze(1)
+        pre_pgen_tensor=torch.cat([decoder_state_reshaped, context_vec], dim=1)
+        pgen=self.pgen(pre_pgen_tensor)    # batchsizeX1
+        pcopy=1.0-pgen
+        output_probabilities=self.output_probs(output_logits.squeeze(1))
+        
+        attn_weights=attn_weights.squeeze(2)
+        mask=encoder_input!=0
+        attn_weights=attn_weights*mask.type(torch.float)
+        marginals=attn_weights.sum(dim=1).view(-1,1)
+        attn_weights=attn_weights/marginals        
 
+        copy_probabilities=torch.zeros_like(output_probabilities)  # batchsizexout_vocab
+        copy_probabilities.scatter_add_(1, encoder_input, attn_weights)        
+        
+#         try:
+#             copy_probabilities=torch.zeros_like(output_probabilities)  # batchsizexout_vocab
+#             copy_probabilities.scatter_add_(1, encoder_input, attn_weights)
+#         except RuntimeError:
+#             print("hajraat hajraat hajraat ", output_probabilities.shape)
+        
+        total_probabilities=pgen*output_probabilities+pcopy*copy_probabilities
+                
+        return total_probabilities.unsqueeze(1)  # batchX1Xoutvocab
+        
+        
+        
 class DecoderRNN(nn.Module):
     def __init__(
             self,
             embedding,
+            copy_translation_embedding,
             de_vocab_size,
             de_embedding_dim,
             en_hidden_size,
@@ -278,15 +327,6 @@ class DecoderRNN(nn.Module):
             h_attn=False,
             index=0
     ):
-        super(DecoderRNN, self).__init__()
-        self.vocab_size = de_vocab_size
-        self.embedding_dim = \
-            de_embedding_dim * 2 if feed_last else de_embedding_dim
-        self.hidden_size = de_hidden_size
-        self.n_layers = n_de_layers
-        self.bidirectional = bidirectional
-        self.batch_norm = batch_norm
-        self.cell = cell
         """
             self.embedding:
                 input: [batch_size, seq_length]
@@ -327,7 +367,18 @@ class DecoderRNN(nn.Module):
                             [n_layers * (bidirectional + 1), batch_size, \
                                     hidden_size]
 
-        """
+        """        
+        super(DecoderRNN, self).__init__()
+        self.vocab_size = de_vocab_size
+        self.embedding_dim = \
+            de_embedding_dim * 2 if feed_last else de_embedding_dim
+        self.hidden_size = de_hidden_size
+        self.n_layers = n_de_layers
+        self.bidirectional = bidirectional
+        self.batch_norm = batch_norm
+        self.cell = cell
+        self.copy_translation_embedding=copy_translation_embedding
+
         self.h_attn = h_attn
         if attn_method != 'none':
             rnn_dim = self.embedding_dim + en_hidden_size * (bidirectional + 1)
@@ -375,9 +426,12 @@ class DecoderRNN(nn.Module):
                     de_hidden_size * (1 + bidirectional))
 
         self.feed_last = feed_last
+        
+        print(en_hidden_size, de_hidden_size, de_vocab_size)
+        self.copy_mechanism = CopyMechanism( en_hidden_size*(1+bidirectional), de_hidden_size*(1+bidirectional), de_vocab_size)
 
     def forward(
-            self, inputs, last_hidden, encoder_hiddens,
+            self, inputs, last_hidden, encoder_input, encoder_hiddens,
             last_cell=None, last_output=None, last_decoder_hiddens=None):
         """
             last_hidden:
@@ -422,7 +476,11 @@ class DecoderRNN(nn.Module):
                 output = self.out(output).unsqueeze(1)
             else:
                 output = self.out(output)
-            return output, hidden
+            translated_encoder_input=self.copy_translation_embedding(encoder_input).squeeze(2)
+#             print(translated_encoder_input)
+#             print(torch.min(translated_encoder_input), torch.max(translated_encoder_input))
+            final_probabilities = self.copy_mechanism(output, attn_weights, hidden, attn, translated_encoder_input)
+            return torch.log(final_probabilities), hidden     # calling torch.log so that the returned stuff is logits . slightly dumb idea
         elif self.cell == "LSTM":
             output, (hidden, cell) = self.rnn(
                     embedded, (last_hidden, last_cell))
@@ -430,8 +488,14 @@ class DecoderRNN(nn.Module):
                 output = self.batch_norm(output.squeeze(1))
                 output = self.out(output).unsqueeze(1)
             else:
-                output = self.out(output)
-            return output, hidden, cell
+                output = self.out(output)                                 
+            translated_encoder_input=self.copy_translation_embedding(encoder_input).squeeze(2)
+            final_probabilities = self.copy_mechanism(output, attn_weights, hidden, attn, translated_encoder_input)
+            return torch.log(final_probabilities), hidden, cell    # calling torch.log so that the returned stuff is logits . slightly dumb idea
+        
+            # params are output, attn_weights, {last_hidden|hidden //note that current hidden incorporates the current input as well}, attn(contextvec), encoder_input
+    
+      
 
     def initHidden(self, batch_size):
         result = Variable(
