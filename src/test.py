@@ -144,5 +144,5 @@ model.test(
         inner_schedule_sampling=args.inner_schedule_sampling,
         inter_schedule_sampling=args.inter_schedule_sampling,
         max_norm=args.max_norm,
-        curriculum_layers=args.n_layers
+        curriculum_layers=args.n_layers, is_curriculum=args.is_curriculum
 )

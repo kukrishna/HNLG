@@ -8,7 +8,7 @@ import random
 import numpy as np
 import os
 
-from module import EncoderRNN
+from module import EncoderRNN, ReconRNN
 from module import DecoderRNN
 # from utils import single_BLEU, BLEU, single_ROUGE, ROUGE, best_ROUGE, print_time_info, check_dir, print_curriculum_status
 from utils import *
@@ -76,6 +76,7 @@ class NLG:
         self.bidirectional = bidirectional
         self.dir_name = model_config.dir_name
         self.h_attn = model_config.h_attn
+        self.recon_less = model_config.recon_loss
 
 
         # embedding layer setting
@@ -142,8 +143,30 @@ class NLG:
                     index=n
             )
             self.decoders.append(decoder)
+        self.recon_decoder = ReconRNN(
+            embedding=en_embed,
+            en_vocab_size=en_vocab_size,
+            de_embedding_dim=(
+                embedding_dim
+                if share_embedding and en_embedding
+                else en_embedding_dim),
+            en_hidden_size=de_hidden_size,
+            de_hidden_size=en_hidden_size,
+            n_en_layers=n_de_layers,
+            n_de_layers=n_en_layers,
+            bidirectional=bidirectional,
+            feed_last=(True
+                       if feed_last and n > 0
+                       else False),
+            batch_norm=batch_norm,
+            attn_method=attn_method,
+            cell=cell,
+            h_attn=self.h_attn,
+            index=n
+        )
 
         self.encoder = self.encoder.cuda() if use_cuda else self.encoder
+        self.recon_decoder = self.recon_decoder.cuda() if use_cuda else self.recon_decoder
         self.decoders = [
                 decoder.cuda()
                 if use_cuda else decoder for decoder in self.decoders]
@@ -172,9 +195,14 @@ class NLG:
         # encoder parameters optimization
         self.encoder_parameters = filter(
                 lambda p: p.requires_grad, self.encoder.parameters())
+        self.recon_decoder_parameters = filter(
+            lambda p: p.requires_grad, self.recon_decoder.parameters())
         self.encoder_optimizer = build_optimizer(
                 en_optimizer, self.encoder_parameters,
                 en_learning_rate)
+        self.recon_decoder_optimizer = build_optimizer(
+            en_optimizer, self.recon_decoder_parameters,
+            en_learning_rate)
         # decoder parameters optimization
         decoder_parameters = []
         for decoder in self.decoders:
@@ -250,7 +278,7 @@ class NLG:
               schedule_sampling=False,
               inner_schedule_sampling=False,
               inter_schedule_sampling=False,
-              max_norm=0.25, curriculum_layers=2):
+              max_norm=0.25, curriculum_layers=2, is_curriculum=False):
 
         self.batches = 0
         print_curriculum_status(curriculum_layers)
@@ -286,7 +314,7 @@ class NLG:
                         schedule_sampling=schedule_sampling,
                         inner_schedule_sampling=inner_schedule_sampling,
                         inter_schedule_sampling=inter_schedule_sampling,
-                        max_norm=max_norm
+                        max_norm=max_norm, is_curriculum=is_curriculum
                 )
 
             # save model
@@ -319,7 +347,7 @@ class NLG:
             inner_schedule_sampling=False,
             inter_schedule_sampling=False,
             max_norm=0.25,
-            curriculum_layers=2):
+            curriculum_layers=2, is_curriculum=False):
 
         self.batches = 0
 
@@ -344,7 +372,8 @@ class NLG:
                     result_path=os.path.join(
                         os.path.join(self.log_dir, "validation"),
                         "test.txt"
-                    )
+                    ),
+                is_curriculum=is_curriculum
             )
             avg_test_loss += test_loss
             avg_test_single_BLEU += test_single_BLEU
@@ -398,7 +427,7 @@ class NLG:
             inner_schedule_sampling=False,
             inter_schedule_sampling=False,
             max_norm=None,
-            result_path=None
+            result_path=None, is_curriculum=False
             ):
         """
         When testing=False, run_batch is in training mode, and you should
@@ -555,6 +584,7 @@ class NLG:
         real_decoder_inputs = [[] for _ in range(curriculum_layers)]
         decoder_inputs = None
         last_decoder_hiddens = None
+        decoder_outputs_stck = []
         for d_idx, decoder in enumerate(self.decoders[:curriculum_layers]):
             # for recording actual inputs
             _real_decoder_inputs = Variable(
@@ -616,6 +646,7 @@ class NLG:
             # Decoding sequence
             # for repeat_input, remember the offset of the label.
             label_idx = [0 for _ in range(batch_size)]
+            decoder_outputs_stck = []
             for idx in range(decoder_labels[d_idx].shape[1]):
                 last_output = last_output.cuda() if use_cuda else last_output
 
@@ -632,6 +663,7 @@ class NLG:
                             decoder_input, decoder_hidden,
                             encoder_outputs, decoder_cell,
                             last_output=last_output)
+                decoder_outputs_stck.append(decoder_output)
 
                 target = Variable(
                         torch.from_numpy(
@@ -734,11 +766,72 @@ class NLG:
             all_loss += loss.data[0] / de_lengths[d_idx]
             loss = 0
 
+        if self.recon_less and (not is_curriculum or curriculum_layers == 4):
+            last_decoder_hiddens = None
+            reverse_decoder_outputs_stck = []
+            decoder_hiddens = torch.stack(decoder_outputs_stck, dim=1) #batch*seq*dim
+            batch_size = decoder_hiddens.size(0)
+            recon_input = decoder_hiddens #linear to encoder hidden state
+
+            # Prepare for initial hidden state and cell
+            decoder_hidden = self.recon_decoder.transform_layer(decoder_outputs_stck[-1])
+            if self.cell == "LSTM":
+                decoder_cell = encoder_cell
+
+            # Prepare for first input of certain layer
+            decoder_input = Variable(
+                    torch.LongTensor(batch_size, 1).fill_(_BOS))
+            decoder_input = decoder_input.cuda() if use_cuda else decoder_input
+
+            # Set last_output of the first step to BOS
+            last_output = Variable(
+                torch.LongTensor(batch_size, 1).fill_(_BOS)
+            )
+
+            for idx in range(decoder_hiddens.size(1)):
+                last_output = last_output.cuda() if use_cuda else last_output
+
+                if self.recon_decoder.cell == "GRU":
+                    decoder_output, decoder_hidden = self.recon_decoder(
+                        decoder_input,
+                        decoder_hidden,
+                        recon_input,
+                        last_output=last_output,
+                        last_decoder_hiddens=last_decoder_hiddens
+                    )
+                elif self.recon_decoder.cell == "LSTM":
+                    decoder_output, decoder_hidden, decoder_cell = self.recon_decoder(
+                        decoder_input, decoder_hidden,
+                        recon_input, decoder_cell,
+                        last_output=last_output)
+                reverse_decoder_outputs_stck.append(decoder_output)
+
+                target = Variable(
+                    torch.from_numpy(
+                        encoder_input[:, idx])).cuda()
+
+                loss += criterion(decoder_output.squeeze(1), target)
+
+                topv, topi = decoder_output.data.topk(1)
+                last_output = Variable(topi).squeeze(1)
+                decoder_input = Variable(topi).squeeze(1)
+                decoder_input = (
+                        decoder_input.cuda() if use_cuda
+                        else decoder_input)
+
+            if not testing:
+                loss.backward(retain_graph=True)
+            all_loss += loss.data[0] / de_lengths[d_idx]
+            loss = 0
+
+
         if not testing:
             clip_grad_norm(self.encoder_parameters, max_norm)
             self.encoder_optimizer.step()
             clip_grad_norm(self.decoder_parameters, max_norm)
             self.decoder_optimizer.step()
+            clip_grad_norm(self.recon_decoder_parameters, max_norm)
+            self.recon_decoder_optimizer.step()
 
         else:
             # untokenize the sentence,
