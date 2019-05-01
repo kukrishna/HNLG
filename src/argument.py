@@ -197,6 +197,10 @@ def define_arguments(script=False):
             nargs=nargs, choices=range(0, 2),
             help='use curriculum learning or not [1]')
     parser.add_argument(
+        '--recon_loss', type=int, default=1,
+        nargs=nargs, choices=range(0, 2),
+        help='use curriculum learning or not [1]')
+    parser.add_argument(
             '--padding_loss', type=float, default=0.0, nargs=nargs,
             help='the weight of padding loss [0.0]')
     parser.add_argument(
