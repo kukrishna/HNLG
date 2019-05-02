@@ -124,10 +124,18 @@ loss_weight = torch.FloatTensor(loss_weight)
 loss_weight = loss_weight.cuda() if use_cuda else loss_weight
 loss_func = nn.CrossEntropyLoss(weight=loss_weight)
 
+loss_weight_recon = np.ones(en_vocab_size)
+loss_weight_recon[_PAD] = args.padding_loss
+loss_weight_recon[_EOS] = args.eos_loss
+loss_weight_recon = torch.FloatTensor(loss_weight_recon)
+loss_weight_recon = loss_weight_recon.cuda() if use_cuda else loss_weight_recon
+loss_func_recon = nn.CrossEntropyLoss(weight=loss_weight_recon)
+
 model.test(
         epochs=args.epochs // args.n_layers,
         batch_size=args.batch_size,
         criterion=loss_func,
+        recon_criterion=loss_func_recon,
         verbose_epochs=args.verbose_epochs,
         verbose_batches=args.verbose_batches,
         valid_epochs=args.valid_epochs,

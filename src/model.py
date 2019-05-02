@@ -295,6 +295,7 @@ class NLG:
             print("+----------------+")
             print("|    TRAINING    |")
             print("+----------------+")
+            loss = 0
             for b_idx, batch in enumerate(tqdm(self.train_data_loader)):
                 self.batches += 1
                 # test_loss, test_single_BLEU, test_BLEU, test_single_ROUGE, test_ROUGE, test_best_ROUGE
@@ -316,7 +317,9 @@ class NLG:
                         inter_schedule_sampling=inter_schedule_sampling,
                         max_norm=max_norm, is_curriculum=is_curriculum
                 )
-
+                loss+=batch_loss
+            print("Loss: "+str(loss/self.batches))
+            loss=0
             # save model
             if idx % save_epochs == 0:
                 print_time_info("Epoch {}: save model...".format(idx))
@@ -391,7 +394,7 @@ class NLG:
         avg_test_single_ROUGE = (avg_test_single_ROUGE/batch_amount)
         avg_test_ROUGE = (avg_test_ROUGE/batch_amount)
         avg_test_best_ROUGE = (avg_test_best_ROUGE/batch_amount)
-
+        print("Loss: "+str(avg_test_loss))
         print(avg_test_single_BLEU)
         print(avg_test_BLEU)
         print(avg_test_single_ROUGE)
