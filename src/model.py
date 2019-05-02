@@ -191,8 +191,7 @@ class NLG:
                 drop_last=True,
                 collate_fn=collate_fn,
                 pin_memory=True)
-
-        # encoder parameters optimization
+        # encoder parameters optimization::
         self.encoder_parameters = filter(
                 lambda p: p.requires_grad, self.encoder.parameters())
         self.recon_decoder_parameters = filter(
@@ -265,7 +264,7 @@ class NLG:
         self.batches = 0
         self.en_use_attr_init_state = en_use_attr_init_state
 
-    def train(self, epochs, batch_size, criterion, verbose_epochs=1,
+    def train(self, epochs, batch_size, criterion, recon_criterion, verbose_epochs=1,
               verbose_batches=1, valid_epochs=1, valid_batches=1000,
               save_epochs=10,
               split_teacher_forcing=False,
@@ -303,6 +302,7 @@ class NLG:
                 batch_loss, batch_single_BLEU, batch_BLEU, batch_single_ROUGE, batch_ROUGE, batch_best_ROUGE = self.run_batch(
                         batch,
                         criterion,
+                        recon_criterion,
                         curriculum_layers,
                         testing=False,
                         split_teacher_forcing=split_teacher_forcing,
@@ -331,6 +331,7 @@ class NLG:
             epochs,
             batch_size,
             criterion,
+            recon_criterion,
             verbose_epochs=1,
             verbose_batches=1,
             valid_epochs=1,
@@ -367,6 +368,7 @@ class NLG:
             test_loss, test_single_BLEU, test_BLEU, test_single_ROUGE, test_ROUGE, test_best_ROUGE = self.run_batch(
                     batch,
                     criterion,
+                    recon_criterion,
                     curriculum_layers,
                     testing=True,
                     result_path=os.path.join(
@@ -417,6 +419,7 @@ class NLG:
             self,
             batch,
             criterion,
+            recon_criterion,
             curriculum_layers,
             testing=False,
             split_teacher_forcing=False,
@@ -649,7 +652,7 @@ class NLG:
             decoder_outputs_stck = []
             for idx in range(decoder_labels[d_idx].shape[1]):
                 last_output = last_output.cuda() if use_cuda else last_output
-
+                #print(last_decoder_hiddens)
                 if decoder.cell == "GRU":
                     decoder_output, decoder_hidden = decoder(
                         decoder_input,
@@ -774,7 +777,7 @@ class NLG:
             recon_input = decoder_hiddens #linear to encoder hidden state
 
             # Prepare for initial hidden state and cell
-            decoder_hidden = self.recon_decoder.transform_layer(decoder_outputs_stck[-1])
+            decoder_hidden = self.recon_decoder.transform_layer(decoder_hidden)
             if self.cell == "LSTM":
                 decoder_cell = encoder_cell
 
@@ -783,14 +786,14 @@ class NLG:
                     torch.LongTensor(batch_size, 1).fill_(_BOS))
             decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
-            # Set last_output of the first step to BOS
+            # Set last_output of the first step to UNK since encoder has only unk and bos
             last_output = Variable(
-                torch.LongTensor(batch_size, 1).fill_(_BOS)
+                torch.LongTensor(batch_size, 1).fill_(_UNK)
             )
 
-            for idx in range(decoder_hiddens.size(1)):
+            for idx in range(encoder_input.size(1)):
                 last_output = last_output.cuda() if use_cuda else last_output
-
+                #print(decoder_input.size())
                 if self.recon_decoder.cell == "GRU":
                     decoder_output, decoder_hidden = self.recon_decoder(
                         decoder_input,
@@ -807,10 +810,10 @@ class NLG:
                 reverse_decoder_outputs_stck.append(decoder_output)
 
                 target = Variable(
-                    torch.from_numpy(
-                        encoder_input[:, idx])).cuda()
-
-                loss += criterion(decoder_output.squeeze(1), target)
+                    encoder_input.detach()[:, idx])
+                #print(target.size())
+                #print(decoder_output.size())
+                loss += recon_criterion(decoder_output.squeeze(1), target)
 
                 topv, topi = decoder_output.data.topk(1)
                 last_output = Variable(topi).squeeze(1)
