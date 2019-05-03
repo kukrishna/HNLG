@@ -144,6 +144,7 @@ class NLG:
             )
             self.decoders.append(decoder)
         self.recon_decoder = ReconRNN(
+            en_embedding=en_embedding,
             embedding=en_embed,
             en_vocab_size=en_vocab_size,
             de_embedding_dim=(
