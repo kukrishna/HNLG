@@ -465,6 +465,7 @@ class ReconRNN(nn.Module):
     ):
         super(ReconRNN, self).__init__()
         self.vocab_size = en_vocab_size
+        self.en_embedding = en_embedding
         if en_embedding:
             self.embedding = embedding
         else:
