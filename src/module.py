@@ -573,10 +573,10 @@ class ReconRNN(nn.Module):
             embedded = Variable(embedded.cuda())
 
             size2 = last_output.size()
-            embedded2 = torch.Tensor(size[0], size[1], self.vocab_size).zero_()
-            lop = last_output.data.unsqueeze(2)
-            lop.scatter_(dim=2, index=last_output.cpu(), value=1.)
-            lop = Variable(lop.cuda())
+            embedded2 = torch.Tensor(size2[0], size2[1], self.vocab_size).zero_()
+            last_output = last_output.data.unsqueeze(2)
+            embedded2.scatter_(dim=2, index=last_output.cpu(), value=1.)
+            lop = Variable(embedded2.cuda())
 
         if self.feed_last and last_output is not None:
             embedded = torch.cat((embedded, lop), 2)
