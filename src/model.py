@@ -827,7 +827,7 @@ class NLG:
 
             if not testing:
                 loss.backward(retain_graph=True)
-            all_loss += loss.data[0] / de_lengths[d_idx]
+            all_loss += loss.data[0] / encoder_input.size(1)
             loss = 0
 
 
