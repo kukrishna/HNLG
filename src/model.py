@@ -771,7 +771,7 @@ class NLG:
             if not testing:
                 loss.backward(retain_graph=True)
             all_loss += loss.data[0] / de_lengths[d_idx]
-            loss = 0
+            #loss = 0
 
         if self.recon_less and (not is_curriculum or curriculum_layers == 4):
             last_decoder_hiddens = None
@@ -787,7 +787,7 @@ class NLG:
 
             # Prepare for first input of certain layer
             decoder_input = Variable(
-                    torch.LongTensor(batch_size, 1).fill_(_BOS))
+                    torch.LongTensor(batch_size, 1).fill_(_UNK))
             decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
             # Set last_output of the first step to UNK since encoder has only unk and bos
