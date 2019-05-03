@@ -267,7 +267,7 @@ class CopyMechanism(nn.Module):
         super(CopyMechanism, self).__init__()
         self.pgen=nn.Sequential(
             nn.Linear(decoder_hidden_size+encoder_hidden_size, 1),
-            nn.Softmax(dim=-1)
+            nn.Sigmoid()
         )
         
         self.attn_softmax=nn.Softmax(dim=-1)
