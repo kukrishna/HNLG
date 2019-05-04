@@ -329,6 +329,7 @@ class DecoderRNN(nn.Module):
 
         """
         self.h_attn = h_attn
+        self.attn_method = attn_method
         if attn_method != 'none':
             rnn_dim = self.embedding_dim + en_hidden_size * (bidirectional + 1)
             self.attn = Attn(
@@ -396,7 +397,9 @@ class DecoderRNN(nn.Module):
                 attn_weights = self.attn(
                     last_hidden.permute(1, 0, 2).contiguous().view(batch_size, -1),
                     encoder_hiddens).unsqueeze(2)
+                # print('attn_weights.shape', attn_weights.shape) # bs, inseqlen, 1
                 attn = (attn_weights * encoder_hiddens).sum(1).unsqueeze(1)
+                # print('attn', attn.shape) # bs, 1, dim
             elif self.h_attn:
                 attn_weights = self.attn(
                     last_hidden.permute(1, 0, 2).contiguous().view(batch_size, -1),
@@ -422,7 +425,12 @@ class DecoderRNN(nn.Module):
                 output = self.out(output).unsqueeze(1)
             else:
                 output = self.out(output)
-            return output, hidden
+
+            if self.attn_method != 'none':
+                return output, hidden, attn_weights
+            else:
+                return output, hidden, None
+
         elif self.cell == "LSTM":
             output, (hidden, cell) = self.rnn(
                     embedded, (last_hidden, last_cell))

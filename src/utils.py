@@ -200,7 +200,7 @@ def add_path(args):
     args.model_dir = os.path.join(args.data_dir, "model_slt")
     args.log_dir = os.path.join(args.data_dir, "log_slt")
     args.train_data_file = os.path.join(
-            args.data_dir, "{}_train_data.pkl".format(args.dataset))
+            args.data_dir, "{}_train_data_debugin.pkl".format(args.dataset))
     args.valid_data_file = os.path.join(
             args.data_dir, "{}_valid_data.pkl".format(args.dataset))
     args.vocab_file = os.path.join(

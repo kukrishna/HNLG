@@ -13,11 +13,17 @@ def E2ENLG(
         use_punct, min_length=-1, train=True):
     # Step 1: Get the raw dialogues from data files
     raw_dialogues, sf_data = parse_data(data_dir, fold_attr, train)
+    # print(raw_dialogues[:5])
+    # print(sf_data[:5])
     # Step 2: Parse the dialogues
     dialogues = parse_dialogues(raw_dialogues, is_spacy)
+    # print('dialogues')
+    # print(dialogues[:5])
     # Step 3: Build the input data and output labels
     input_data, output_labels = \
         build_dataset(dialogues, is_lemma, use_punct, min_length)
+    print(input_data[:5])
+    print(output_labels[:5])
 
     temp = input_data[0]
     refs_list = []

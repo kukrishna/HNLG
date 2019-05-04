@@ -250,7 +250,8 @@ class NLG:
               schedule_sampling=False,
               inner_schedule_sampling=False,
               inter_schedule_sampling=False,
-              max_norm=0.25, curriculum_layers=2):
+              max_norm=0.25, curriculum_layers=2,
+              type_coverage = 'att_reg'):
 
         self.batches = 0
         print_curriculum_status(curriculum_layers)
@@ -286,7 +287,8 @@ class NLG:
                         schedule_sampling=schedule_sampling,
                         inner_schedule_sampling=inner_schedule_sampling,
                         inter_schedule_sampling=inter_schedule_sampling,
-                        max_norm=max_norm
+                        max_norm=max_norm,
+                        type_coverage = type_coverage
                 )
 
             # save model
@@ -398,7 +400,8 @@ class NLG:
             inner_schedule_sampling=False,
             inter_schedule_sampling=False,
             max_norm=None,
-            result_path=None
+            result_path=None,
+            type_coverage = 'att_reg'
             ):
         """
         When testing=False, run_batch is in training mode, and you should
@@ -555,6 +558,7 @@ class NLG:
         real_decoder_inputs = [[] for _ in range(curriculum_layers)]
         decoder_inputs = None
         last_decoder_hiddens = None
+        multi_layer_decoder_attentions = []
         for d_idx, decoder in enumerate(self.decoders[:curriculum_layers]):
             # for recording actual inputs
             _real_decoder_inputs = Variable(
@@ -616,17 +620,34 @@ class NLG:
             # Decoding sequence
             # for repeat_input, remember the offset of the label.
             label_idx = [0 for _ in range(batch_size)]
+            decoder_attentions = []
+            loss_per_time_step = []
+            # for decoder timesteps idx
             for idx in range(decoder_labels[d_idx].shape[1]):
                 last_output = last_output.cuda() if use_cuda else last_output
 
                 if decoder.cell == "GRU":
-                    decoder_output, decoder_hidden = decoder(
+                    decoder_output, decoder_hidden, attn_weights = decoder(
                         decoder_input,
                         decoder_hidden,
                         encoder_outputs,
                         last_output=last_output,
                         last_decoder_hiddens=last_decoder_hiddens
                     )
+                    ## attentions returned from module
+                    decoder_attentions.append(attn_weights)
+                    att_coverage_vector = torch.stack(decoder_attentions)
+                    # sum across decoder time step dimension at dim 0
+                    att_coverage = torch.sum(att_coverage_vector, dim = 0)
+                    ones = torch.ones(att_coverage.shape)
+                    ones = ones.cuda() if use_cuda else ones
+
+                    min_vec = torch.min(att_coverage, ones)
+                    ## alternative
+                    #min_vec = torch.min(att_coverage, attn_weights)
+                    loss_per_time_step.append(min_vec)
+
+
                 elif decoder.cell == "LSTM":
                     decoder_output, decoder_hidden, decoder_cell = decoder(
                             decoder_input, decoder_hidden,
@@ -695,6 +716,26 @@ class NLG:
                     _real_decoder_inputs = torch.cat((
                         _real_decoder_inputs, decoder_input), 1)
 
+            # total sum for all time steps, abigail coverage 
+            stacked_loss_per_timestep = torch.stack(loss_per_time_step)
+            loss_see_sum = stacked_loss_per_timestep.sum()/(batch_size * stacked_loss_per_timestep.shape[2])
+            
+            # calculate coverage loss for this layer, attention regularizer
+            att_reg_tensor = torch.stack(decoder_attentions) 
+            att_dec_sum_tensor = torch.sum(att_reg_tensor, dim = 0)
+            att_dec_sum_log = -torch.log(att_dec_sum_tensor)
+            loss_reg_sum = att_dec_sum_log.sum()/(att_dec_sum_log.shape[0] * att_dec_sum_log.shape[1])
+
+            # print(loss, loss_see_sum, loss_reg_sum)
+            if type_coverage == 'att_see':
+                loss = loss + loss_see_sum
+
+            if type_coverage == 'att_reg':
+                loss = loss + 5 * loss_reg_sum
+            # print(loss)
+            # for summing across layers
+            multi_layer_decoder_attentions.append(decoder_attentions)
+            
             if d_idx < curriculum_layers - 1:
                 decoder_inputs = next_decoder_inputs
                 last_decoder_hiddens = last_decoder_hiddens_temp
@@ -727,12 +768,33 @@ class NLG:
                 best_rouge_score = best_ROUGE(refs, hypothesis)
                 avg_best_rouge_1_2_l_be = np.mean(best_rouge_score, axis=0)
 
+            ## for calcualting attention loss across all layers till now
+            ''''''
+            # att_all_layers = torch.stack([torch.stack(t) for t in multi_layer_decoder_attentions])
+            # att_sum_layers = torch.sum(torch.sum(att_all_layers, dim = 0), dim = 0)
+            ## inner stack for all decoder timesteps, then summed, second stack for all layers,
+            att_all_layers = torch.stack([torch.sum(torch.stack(t), dim = 0) for t in multi_layer_decoder_attentions])
+            ## then log, then summed for all encoder time steps
+            att_sum_log_layers = -torch.log(torch.sum(att_all_layers, dim = 0)/(d_idx+1))
+            # att_sum_layers is sum across all layers, all deocder timesteps
+            # att_dec_sum_log_layers = -torch.log(att_sum_layers)
+            loss_reg_sum_layers = att_sum_log_layers.sum()/(att_sum_log_layers.shape[0] * att_sum_log_layers.shape[1])
+
+            if type_coverage == 'att_reg_multi':
+                loss = loss + 10* loss_reg_sum_layers
+            # print(loss, loss_reg_sum_layers)
+            # breakpoint()
+            
+
             # to prevent the graph keeping growing bigger and resulting in OOM
             # compute the gradients every layer (when training)
             if not testing:
                 loss.backward(retain_graph=True)
-            all_loss += loss.data[0] / de_lengths[d_idx]
+            all_loss += loss.item() / de_lengths[d_idx]
             loss = 0
+
+        
+
 
         if not testing:
             clip_grad_norm(self.encoder_parameters, max_norm)

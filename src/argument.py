@@ -244,5 +244,9 @@ def define_arguments(script=False):
             '--h_attn', type=int, default=0,
             nargs=nargs, choices=range(0, 2),
             help='load saved model or not [0]')
+    parser.add_argument(
+            '--type_coverage', default="att_reg", 
+            choices=['att_reg', 'att_see', 'att_reg_multi'],
+            help='the type of coverage')
     args = parser.parse_args()
     return(parser, args)

@@ -147,7 +147,8 @@ if args.is_curriculum:
                 inner_schedule_sampling=args.inner_schedule_sampling,
                 inter_schedule_sampling=args.inter_schedule_sampling,
                 max_norm=args.max_norm,
-                curriculum_layers=N)
+                curriculum_layers=N,
+                type_coverage = args.type_coverage)
 
 else:
     model.train(
@@ -170,4 +171,5 @@ else:
             inner_schedule_sampling=args.inner_schedule_sampling,
             inter_schedule_sampling=args.inter_schedule_sampling,
             max_norm=args.max_norm,
-            curriculum_layers=args.n_layers)
+            curriculum_layers=args.n_layers,
+            type_coverage = args.type_coverage)
