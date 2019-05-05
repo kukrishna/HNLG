@@ -831,14 +831,18 @@ class NLG:
             all_loss += loss.data[0] / encoder_input.size(1)
             loss = 0
 
-
         if not testing:
+            # for w1, w2 in zip(self.decoder_parameters, self.recon_decoder_parameters):
+            #     w1.grad.data.add_(w2.grad.data)
+            #     w2.grad = None
             clip_grad_norm(self.encoder_parameters, max_norm)
             self.encoder_optimizer.step()
             clip_grad_norm(self.decoder_parameters, max_norm)
             self.decoder_optimizer.step()
             clip_grad_norm(self.recon_decoder_parameters, max_norm)
             self.recon_decoder_optimizer.step()
+            # for w1, w2 in zip(self.decoder_parameters, self.recon_decoder_parameters):
+            #     w2.data.copy_(w1.data)
 
         else:
             # untokenize the sentence,
